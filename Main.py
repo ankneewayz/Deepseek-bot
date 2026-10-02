@@ -40,12 +40,13 @@ SOURCE_CHATS = ["@Thenewpromobot", "@MrpromoterOgbot", "@WorldHilasanaBot"]
 ADMIN_IDS = [int(x.strip()) for x in os.environ.get("ADMIN_IDS", "7017637051,8598993143,7355946581").split(",") if x.strip()]
 
 # High-Quality Cyberpunk / Aesthetic Banner URLs
+
+# --- DIRECT CDN / GOOGLE HOSTED IMAGE LINKS ---
 BANNER_URLS = [
-    "https://images.hdqwalls.com/wallpapers/batman-dark-aesthetic-4k-qw.jpg",
-    "https://images.hdqwalls.com/wallpapers/cyberpunk-2077-anime-girl-4k-i0.jpg",
-    "https://images.hdqwalls.com/wallpapers/anime-boy-cyberpunk-city-neon-4k-zz.jpg",
-    "https://images.hdqwalls.com/wallpapers/superhero-dark-knight-minimal-4k-ho.jpg",
-    "https://images.hdqwalls.com/wallpapers/neon-girl-aesthetic-art-4k-xl.jpg"
+    "https://i.imgur.com/2nLdaA4.jpg",
+    "https://i.imgur.com/39A8pXp.jpeg",
+    "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=1200",
+    "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200"
 ]
 
 
