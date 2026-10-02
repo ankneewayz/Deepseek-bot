@@ -6,7 +6,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from collections import defaultdict
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
-from telethon.errors import ChatForwardsRestrictedError
 
 # --- DUMMY HTTP HEALTH CHECK FOR RENDER FREE TIER ---
 class HealthHandler(BaseHTTPRequestHandler):
@@ -23,7 +22,7 @@ def start_health_server():
     server = HTTPServer(('0.0.0.0', port), HealthHandler)
     server.serve_forever()
 
-# Start HTTP server in a background thread
+# Start light HTTP server in daemon thread
 threading.Thread(target=start_health_server, daemon=True).start()
 
 
@@ -33,24 +32,22 @@ API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 STRING_SESSION = os.environ.get("STRING_SESSION", "")
 
-# Target channels to fetch media from
+# Target channels/bots to fetch media from
 SOURCE_CHATS = ["@Thenewpromobot", "@MrpromoterOgbot", "@WorldHilasanaBot"]
 
 # Parse Admin IDs from environment
 ADMIN_IDS = [int(x.strip()) for x in os.environ.get("ADMIN_IDS", "7017637051,8598993143,7355946581").split(",") if x.strip()]
 
-# High-Quality Cyberpunk / Aesthetic Banner URLs
-
-# --- DIRECT CDN / GOOGLE HOSTED IMAGE LINKS ---
+# Reliable direct image URLs (Unsplash / Direct CDNs)
 BANNER_URLS = [
-    "https://i.imgur.com/2nLdaA4.jpg",
-    "https://i.imgur.com/39A8pXp.jpeg",
     "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=1200",
-    "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200"
+    "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=1200",
+    "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200",
+    "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1200"
 ]
 
 
-# --- IN-MEMORY STORAGE ---
+# --- IN-MEMORY DATA STORAGE (ZERO-DATABASE) ---
 SEEN_VIDEOS = defaultdict(set)
 USER_SENT_MSGS = defaultdict(list)
 USER_STATS = defaultdict(int)
@@ -61,7 +58,7 @@ bot = None
 user_client = None
 
 
-# --- VIDEO FETCHING LOGIC ---
+# --- VIDEO FETCHING ENGINE ---
 async def fetch_random_unseen_video(user_id):
     target_chat = random.choice(SOURCE_CHATS)
     try:
@@ -73,6 +70,7 @@ async def fetch_random_unseen_video(user_id):
             and (target_chat, m.id) not in SEEN_VIDEOS[user_id]
         ]
         
+        # Reset memory for this chat if all recent videos consumed
         if not unseen_msgs:
             SEEN_VIDEOS[user_id] = {item for item in SEEN_VIDEOS[user_id] if item[0] != target_chat}
             unseen_msgs = [m for m in messages if m.video or (m.media and hasattr(m.media, 'document'))]
@@ -98,32 +96,33 @@ async def process_and_send_videos(user_id, event, count=1):
         temp_video_path = None
         temp_thumb_path = None
         try:
-            sent = await bot.forward_messages(user_id, video_msg)
+            # Download via user_client (which is joined in source channels)
+            temp_thumb_path = await user_client.download_media(video_msg, thumb=-1) if (hasattr(video_msg, 'media') and hasattr(video_msg.media, 'document')) else None
+            temp_video_path = await user_client.download_media(video_msg)
+            
+            attributes = video_msg.media.document.attributes if (hasattr(video_msg, 'media') and hasattr(video_msg.media, 'document')) else None
+            
+            # Send file directly via bot to user
+            sent = await bot.send_file(
+                user_id,
+                temp_video_path,
+                caption=video_msg.text or "🎬 **Exclusive Stream**",
+                attributes=attributes,
+                thumb=temp_thumb_path,
+                supports_streaming=True
+            )
             USER_SENT_MSGS[user_id].append(sent.id)
             sent_count += 1
-        except ChatForwardsRestrictedError:
-            try:
-                temp_thumb_path = await user_client.download_media(video_msg, thumb=-1) if hasattr(video_msg.media, 'document') else None
-                temp_video_path = await user_client.download_media(video_msg)
-                
-                attributes = video_msg.media.document.attributes if hasattr(video_msg.media, 'document') else None
-                
-                sent = await bot.send_file(
-                    user_id,
-                    temp_video_path,
-                    caption=video_msg.text or "🎬 **Exclusive Stream**",
-                    attributes=attributes,
-                    thumb=temp_thumb_path,
-                    supports_streaming=True
-                )
-                USER_SENT_MSGS[user_id].append(sent.id)
-                sent_count += 1
-            except Exception as ex:
-                print(f"Failed re-upload: {ex}")
-            finally:
-                for path in (temp_video_path, temp_thumb_path):
-                    if path and os.path.exists(path):
+        except Exception as ex:
+            print(f"Failed processing video: {ex}")
+        finally:
+            # Immediate cleanup of temporary disk files
+            for path in (temp_video_path, temp_thumb_path):
+                if path and os.path.exists(path):
+                    try:
                         os.remove(path)
+                    except Exception:
+                        pass
 
     await waiting_msg.delete()
 
@@ -135,7 +134,7 @@ async def process_and_send_videos(user_id, event, count=1):
         return False
 
 
-# --- UI & COMMANDS ---
+# --- UI & HANDLERS ---
 WELCOME_TEXT = """
 🔥 **WELCOME TO THE ULTRA VIP STREAM HUB** 🔥
 
@@ -159,12 +158,21 @@ async def start_handler(event):
     user = await event.get_sender()
     update_user_info(user)
     random_banner = random.choice(BANNER_URLS)
-    await bot.send_file(
-        event.chat_id,
-        file=random_banner,
-        caption=WELCOME_TEXT,
-        buttons=MAIN_BUTTONS
-    )
+    
+    try:
+        await bot.send_file(
+            event.chat_id,
+            file=random_banner,
+            caption=WELCOME_TEXT,
+            buttons=MAIN_BUTTONS
+        )
+    except Exception as e:
+        print(f"Banner image failed ({e}), sending text fallback...")
+        await bot.send_message(
+            event.chat_id,
+            WELCOME_TEXT,
+            buttons=MAIN_BUTTONS
+        )
 
 async def vid_command_handler(event):
     user = await event.get_sender()
@@ -198,7 +206,7 @@ async def callback_handler(event):
                 USER_STATS[user.id] = max(0, USER_STATS[user.id] - 1)
                 await event.answer("🗑️ Deleted last sent video!", alert=True)
             except Exception:
-                await event.answer("⚠️ Could not delete message.", alert=True)
+                await event.answer("⚠️ Could not delete message (might be older than 48h).", alert=True)
         else:
             await event.answer("❌ No recent video found in this session to delete.", alert=True)
 
